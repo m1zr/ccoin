@@ -1,0 +1,29 @@
+# Use NVIDIA CUDA base image for GPU support
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+
+# Install Python
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements
+COPY pyproject.toml ./
+
+# Install dependencies
+RUN pip3 install --no-cache-dir .
+
+# Copy source code
+COPY src/ ./src/
+
+# Create non-root user
+RUN useradd -m -u 1000 ccoin
+RUN mkdir -p /models && chown ccoin:ccoin /models
+
+USER ccoin
+
+EXPOSE 8080
+
+CMD ["python3", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080"]

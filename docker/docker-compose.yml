@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: ccoin-postgres
+    environment:
+      POSTGRES_USER: ccoin
+      POSTGRES_PASSWORD: ccoin_dev_password
+      POSTGRES_DB: ccoin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./core/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccoin"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis (for caching and pub/sub)
+  redis:
+    image: redis:7-alpine
+    container_name: ccoin-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # CCoin Core Node
+  ccoin-node:
+    build:
+      context: ./core
+      dockerfile: ../docker/Dockerfile.core
+    container_name: ccoin-node
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=ccoin
+      - DB_PASSWORD=ccoin_dev_password
+      - DB_NAME=ccoin
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=debug
+    ports:
+      - "9000:9000"  # P2P
+      - "9001:9001"  # RPC
+    volumes:
+      - ccoin_data:/data
+
+  # Wallet Frontend
+  wallet:
+    build:
+      context: ./wallet
+      dockerfile: ../docker/Dockerfile.wallet
+    container_name: ccoin-wallet
+    depends_on:
+      - ccoin-node
+    environment:
+      - NEXT_PUBLIC_RPC_URL=http://ccoin-node:9001
+    ports:
+      - "3000:3000"
+
+  # Inference Server
+  inference:
+    build:
+      context: ./inference
+      dockerfile: ../docker/Dockerfile.inference
+    container_name: ccoin-inference
+    depends_on:
+      - ccoin-node
+      - redis
+    environment:
+      - NODE_RPC_URL=http://ccoin-node:9001
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8080:8080"
+    volumes:
+      - models_data:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  postgres_data:
+  redis_data:
+  ccoin_data:
+  models_data:

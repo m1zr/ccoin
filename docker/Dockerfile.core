@@ -1,0 +1,42 @@
+# Build stage
+FROM golang:1.21-alpine AS builder
+
+RUN apk add --no-cache git make gcc musl-dev
+
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binaries
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /ccoind ./cmd/ccoind
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /ccoin-cli ./cmd/ccoin-cli
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user
+RUN addgroup -g 1000 ccoin && \
+    adduser -u 1000 -G ccoin -h /home/ccoin -D ccoin
+
+WORKDIR /home/ccoin
+
+# Copy binaries
+COPY --from=builder /ccoind /usr/local/bin/
+COPY --from=builder /ccoin-cli /usr/local/bin/
+
+# Create data directory
+RUN mkdir -p /data && chown ccoin:ccoin /data
+
+USER ccoin
+
+EXPOSE 9000 9001
+
+ENTRYPOINT ["ccoind"]
+CMD ["--db-host=postgres", "--db-port=5432", "--db-user=ccoin", "--db-name=ccoin"]
